@@ -1,4 +1,4 @@
-from typing import Dict
+from typing import Dict, List
 import boto3
 import uuid
 import json
@@ -18,6 +18,13 @@ class MemberExistsException(Exception):
 
     def __init__(self):
         super().__init__("The Member Name is Taken")
+
+
+class MemberDoesNotExistsException(Exception):
+    """Raised when the group member does not exists"""
+
+    def __init__(self):
+        super().__init__("The Member does not Exist")
 
 
 class Group:
@@ -196,15 +203,61 @@ class Group:
         # create member document
         self.table.put_item(Item={"id": id_, "name": name, "todo": []})
 
-    def add_items(self, user: str, *items):
-        # self.table.get_item
-        pass
+    
+    
+    
+    def add_items(self, username: str, *items: List[str]) -> None:
+        """
+        Method to add a new item to todo list, adds to list for a member document 
+
+        Params
+        ------
+
+        self: Group
+        The group object
+        
+        username: str
+        The name of the member, raises exception if member does not exist
+
+        *items: *args
+        The items to add to the todo list
+
+        Returns
+        -------
+        None or raises exception if member does not exist
+        """
+        
+        # get the group document 
+        group = self.table.get_item(
+            Key={
+                'id':self.group_id,
+                'name': self.group_name
+            }
+        )
+
+        # get user_id to access user document
+        try:
+            user_id = group['Item'][username]
+        except:
+            raise MemberDoesNotExistsException
+
+
+        # add item to todo list
+        self.table.update_item(
+            Key={"id": user_id, "name": username},
+            UpdateExpression="SET todo = list_append(todo, :item)",
+            ExpressionAttributeValues={
+                ':item': items,
+            },
+        )
 
 
 if __name__ == "__main__":
     ids = Group.read_ids("groups.json")
     test = Group(ids["test"], "test")
 
-    test.add_user("Saad2")
+    # test.add_user("Saad2")
+
+    test.add_items('Saad2', 'what')
 
     # Group.create_group('Test2', 'groups.json')
