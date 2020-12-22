@@ -166,6 +166,9 @@ class Group:
         Params
         ------
 
+        self: Group
+        The group object
+        
         name: str
         The name of the *new* member
 
