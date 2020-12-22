@@ -203,9 +203,6 @@ class Group:
         # create member document
         self.table.put_item(Item={"id": id_, "name": name, "todo": []})
 
-    
-    
-    
     def add_items(self, username: str, *items: List[str]) -> None:
         """
         Method to add a new item to todo list, adds to list for a member document 
@@ -226,29 +223,61 @@ class Group:
         -------
         None or raises exception if member does not exist
         """
-        
-        # get the group document 
-        group = self.table.get_item(
-            Key={
-                'id':self.group_id,
-                'name': self.group_name
-            }
-        )
+
+        # get the group document
+        group = self.table.get_item(Key={"id": self.group_id, "name": self.group_name})
 
         # get user_id to access user document
         try:
-            user_id = group['Item'][username]
+            user_id = group["Item"][username]
         except:
             raise MemberDoesNotExistsException
 
-
-        # add item to todo list
+        # add items to todo list
         self.table.update_item(
             Key={"id": user_id, "name": username},
             UpdateExpression="SET todo = list_append(todo, :item)",
-            ExpressionAttributeValues={
-                ':item': items,
-            },
+            ExpressionAttributeValues={":item": items,},
+        )
+
+    def remove_items(self, username: str, *item_indices: List[int]) -> None:
+        """
+        Method to delete an item to todo list, removes from list for a member document 
+
+        Params
+        ------
+
+        self: Group
+        The group object
+        
+        username: str
+        The name of the member, raises exception if member does not exist
+
+        *items: *args
+        The items to delete to the todo list, represented as ints
+
+        Returns
+        -------
+        None or raises exception if member does not exist
+        """
+
+        # get the group document
+        group = self.table.get_item(Key={"id": self.group_id, "name": self.group_name})
+
+        # get user_id to access user document
+        try:
+            user_id = group["Item"][username]
+        except:
+            raise MemberDoesNotExistsException
+
+        # build update expression
+        update_expression = "REMOVE " + ", ".join(
+            ["todo[{}]".format(num) for num in item_indices]
+        )
+
+        # remove items to todo list
+        self.table.update_item(
+            Key={"id": user_id, "name": username}, UpdateExpression=update_expression
         )
 
 
@@ -258,6 +287,8 @@ if __name__ == "__main__":
 
     # test.add_user("Saad2")
 
-    test.add_items('Saad2', 'what')
+    # test.add_items('Saad2', 'what')
+
+    test.remove_items("Saad2", 0, 1, 2)
 
     # Group.create_group('Test2', 'groups.json')
