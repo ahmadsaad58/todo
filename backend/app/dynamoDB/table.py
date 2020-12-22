@@ -203,6 +203,45 @@ class Group:
         # create member document
         self.table.put_item(Item={"id": id_, "name": name, "todo": []})
 
+    def remove_user(self, name: str):
+        """
+        Method to remove a member from a group, remove document for member and updates document for the group
+
+        Params
+        ------
+
+        self: Group
+        The group object
+        
+        name: str
+        The name of the member
+
+        Returns
+        -------
+        None or raises exception if member does not exists
+
+        """
+
+        # get the group document
+        group = self.table.get_item(Key={"id": self.group_id, "name": self.group_name})
+
+        # get user_id to access user document
+        try:
+            user_id = group["Item"][name]
+        except:
+            raise MemberDoesNotExistsException
+
+        # remove member from group document
+
+        self.table.update_item(
+            Key={"id": self.group_id, "name": self.group_name},
+            UpdateExpression="REMOVE #name",
+            ExpressionAttributeNames={"#name": name},
+        )
+
+        # remove member from table
+        self.table.delete_item(Key={"id": user_id, "name": name})
+
     def add_items(self, username: str, *items: List[str]) -> None:
         """
         Method to add a new item to todo list, adds to list for a member document 
@@ -285,10 +324,12 @@ if __name__ == "__main__":
     ids = Group.read_ids("groups.json")
     test = Group(ids["test"], "test")
 
-    # test.add_user("Saad2")
+    # test.add_user("Saad")
 
     # test.add_items('Saad2', 'what')
 
-    test.remove_items("Saad2", 0, 1, 2)
+    # test.remove_items("Saad2", 0, 1, 2)
+
+    test.remove_user("Saad2")
 
     # Group.create_group('Test2', 'groups.json')
