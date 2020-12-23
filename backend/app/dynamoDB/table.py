@@ -6,13 +6,6 @@ import json
 # in order for boto3 to work, the config file paths must be set, look at .aws/README.md
 
 
-class GroupExistsException(Exception):
-    """Raised when the group already exists"""
-
-    def __init__(self):
-        super().__init__("The Group Name is Taken")
-
-
 class MemberExistsException(Exception):
     """Raised when the group member already exists"""
 
@@ -32,19 +25,17 @@ class Group:
     Class to keep track of groups
     """
 
-    def __init__(self, group_id: str, group_name: str, table_name: str = None) -> None:
+    def __init__(
+        self, group_name: str, table_name: str = None, json_file: str = "groups.json"
+    ) -> None:
         """
-        Constructor for Group class, expects that the group already exists in groups table.
-        If group does not exist in groups table then do not create a group object as
-        the group will be created but the group id may get lost
+        Constructor for Group class
+        If group does not exist in groups table, then group will be created and stored in Group Table File
 
         Params
         ------
         self: Group
         The group object
-
-        group_id: str
-        The group id that relates to the group, found in groups table
 
         group_name: str
         The name of the group
@@ -52,40 +43,55 @@ class Group:
         table_name: str | None = None
         The name of the table, if none then main table will be used
 
+        json_file: str = 'groups.json'
+        The name of the Group Table File, if none then main groups file will be used
+
         Returns
         -------
         None
         """
-        # defines the id and group name
-        self.group_id = group_id
+        # connect to table
+        self.connect(table_name)
+
+        # set the Group Table File
+        self.json_file = json_file
+
+        # read the ids in the Group Table File
+        ids = Group.read_ids(self.json_file)
+
+        # checks if group exists, if not create the group
+        try:
+            self.group_id = ids[group_name]
+        except Exception as KeyError:
+            self.group_id = self.create_group(group_name, ids)
+
         self.group_name = group_name
 
-        # connect to table
-        self.dynamodb, self.table = Group.connect(table_name)
-
-    @staticmethod
-    def connect(table_name: str = None):
+    def connect(self, table_name: str = None) -> None:
         """
-        Static function that connects to the correct dynamodb table
+        Connects to the correct dynamodb table
 
         Params
         ------
+
+        self: Group
+        The group object
 
         table_name: str
         The table to connect to, if none then connects to main table
 
         Returns
         -------
-        DynamoDB and Table Objects
+        None
         """
         # get resource
-        dynamodb = boto3.resource("dynamodb")
+        self.dynamodb = boto3.resource("dynamodb")
         # get table
-        table = (
-            dynamodb.Table(table_name) if table_name else dynamodb.Table("group-todo")
+        self.table = (
+            self.dynamodb.Table(table_name)
+            if table_name
+            else self.dynamodb.Table("group-todo")
         )
-
-        return dynamodb, table
 
     @staticmethod
     def read_ids(json_file: str) -> Dict[str, str]:
@@ -126,45 +132,75 @@ class Group:
         with open(json_file, "w") as f:
             json.dump(ids, f)
 
-    @staticmethod
-    def create_group(group_name: str, json_file: str, table_name: str = None) -> None:
+    def create_group(self, group_name: str, ids: Dict[str, str]) -> str:
         """
-        Static function that creates a group to a dynamodb table and saves the group to a groups table
+        Creates a group to a dynamodb table
 
         Params
         ------
 
+        self: Group
+        The group object
+
         group_name: str
         The name of the *new* group
 
-        json_file: str
-        File with groups table
+        ids: Dict[str, str]
+        Group Table as a dictionary
 
-        table_name: str | None = None
-        The name of the table, if none then main table will be used
+        Returns
+        -------
+        The id of *new* group
+        """
+
+        # create id for group
+        ids[group_name] = str(uuid.uuid4())
+
+        # add new group
+        self.table.put_item(Item={"id": ids[group_name], "name": group_name})
+
+        # write new ids
+        Group.write_ids(ids, self.json_file)
+
+        # return the id
+        return ids[group_name]
+
+    def delete_group(self) -> None:
+        """
+        Method to delete the group from table, remove document for the group
+
+        Params
+        ------
+
+        self: Group
+        The group object that will be deleted
 
         Returns
         -------
         None
+
         """
 
-        # read ids from table
-        ids = Group.read_ids(json_file)
+        # get the group document
+        group = self.table.get_item(Key={"id": self.group_id, "name": self.group_name})
 
-        # if id does not exist then create new one
-        if group_name not in ids:
-            ids[group_name] = str(uuid.uuid4())
-        else:
-            raise GroupExistsException
+        members = [
+            (group["Item"][attribute], attribute)
+            for attribute in group["Item"]
+            if attribute not in ("id", "name")
+        ]
 
-        # connect to table
-        _, table = Group.connect(table_name)
+        for user_id, name in members:
+            # remove member from table
+            self.table.delete_item(Key={"id": user_id, "name": name})
 
-        # add new group
-        table.put_item(Item={"id": ids[group_name], "name": group_name})
+        # remove group from table
+        self.table.delete_item(Key={"id": self.group_id, "name": self.group_name})
 
-        # write new ids
-        Group.write_ids(ids, json_file)
+        # delete the id
+        ids = Group.read_ids(self.json_file)
+        del ids[self.group_name]
+        Group.write_ids(ids, self.json_file)
 
     def add_user(self, name: str):
         """
@@ -231,16 +267,15 @@ class Group:
         except:
             raise MemberDoesNotExistsException
 
-        # remove member from group document
+        # remove member from table
+        self.table.delete_item(Key={"id": user_id, "name": name})
 
+        # remove member from group document
         self.table.update_item(
             Key={"id": self.group_id, "name": self.group_name},
             UpdateExpression="REMOVE #name",
             ExpressionAttributeNames={"#name": name},
         )
-
-        # remove member from table
-        self.table.delete_item(Key={"id": user_id, "name": name})
 
     def add_items(self, username: str, *items: List[str]) -> None:
         """
@@ -273,6 +308,7 @@ class Group:
             raise MemberDoesNotExistsException
 
         # add items to todo list
+        # catch this if it fails
         self.table.update_item(
             Key={"id": user_id, "name": username},
             UpdateExpression="SET todo = list_append(todo, :item)",
@@ -315,21 +351,40 @@ class Group:
         )
 
         # remove items to todo list
+        # catch this if it fails
         self.table.update_item(
             Key={"id": user_id, "name": username}, UpdateExpression=update_expression
         )
 
 
 if __name__ == "__main__":
-    ids = Group.read_ids("groups.json")
-    test = Group(ids["test"], "test")
+    print("creating group")
+    test = Group("Test2")
 
-    # test.add_user("Saad")
+    print("adding users in Test2 group")
+    test.add_user("Saad")
+    test.add_user("Saad2")
+    test.add_user("Saad3")
+    test.add_user("Saad4")
 
-    # test.add_items('Saad2', 'what')
+    input("adding items to each member, press enter to continue")
+    test.add_items("Saad", "hello", "world")
+    test.add_items("Saad2", "hello", "Saad")
+    test.add_items("Saad3", "what", "ice cream")
+    test.add_items("Saad4", "workout", "eat well", "wake up early", "shower")
 
-    # test.remove_items("Saad2", 0, 1, 2)
+    input("removing items for each member, press enter to contine")
+    # removing more than the required items
+    test.remove_items("Saad", 0, 1, 2)
+    # removing the right amount of items
+    test.remove_items("Saad2", 0, 1)
+    # removing 1 item, cannot use negative indicies
+    test.remove_items("Saad3", 1)
+    # removing an item
+    test.remove_items("Saad4", 1, 2)
 
-    test.remove_user("Saad2")
+    input("removing a user, press enter to continue")
+    test.remove_user("Saad3")
 
-    # Group.create_group('Test2', 'groups.json')
+    input("deleting group, table should be empty after this. Press enter to continue")
+    test.delete_group()
